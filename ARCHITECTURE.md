@@ -88,6 +88,38 @@ Decisions in the stats tables:
 * **Internal consistency is enforced twice.** The clean model rejects made > attempted
   or rebounds that do not sum, and the same rules are check constraints in Postgres.
 
+## Runs and quality checks
+
+Every invocation inserts an `ingest_runs` row with status `running` before the first
+API call and finalises it at the end, each in its own short transaction. If the process
+dies, a `running` row older than an hour is visible as a stuck run. Every row written by
+a run is stamped with its `ingest_run_id` (excluded from change detection, so a stamp
+alone never counts as an update). `nba-pipeline check` records a run of kind `check`
+with no ingest.
+
+Six checks run at the end of every ingest and write one `quality_results` row each:
+
+| check | fails when |
+|---|---|
+| `box_scores_complete` | a final game on the date has no box score (not-yet-final games warn) |
+| `no_duplicate_player_rows` | more than one row per (game_id, player_id); guaranteed by the PK, verified anyway |
+| `team_points_match_players` | team points differ from the sum of its players' points |
+| `team_minutes_sum` | team seconds are not 14400 + 1500 per overtime, or players do not sum to the team, beyond 60 s |
+| `schema_drift` | any payload in the run failed validation |
+| `freshness` | newest final game is more than 2 days old and a later run found games; warns when later runs found none (offseason) |
+
+Policy decisions:
+
+* **A failing check never removes data.** The rows stay loaded; the result row is the
+  flag and the API surfaces it.
+* **`fail` and `error` fail the run and exit 1.** A nightly job that is green while
+  team points do not match player points teaches people to stop looking. `warn` is the
+  advisory level and exits 0.
+* **One broken check never hides the others.** The runner turns an exception into an
+  `error` result and continues.
+* **Tolerances are explicit and recorded in `details`.** Sixty seconds on minutes
+  absorbs the NBA's per-player rounding but still catches a missing player.
+
 ## Loading
 
 SQLAlchemy Core only. Table definitions in `load/tables.py` exist for building

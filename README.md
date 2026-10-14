@@ -15,8 +15,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design decisions.
 |------|-------|-------|
 | 1 | Scaffolding, Postgres, migrations, scoreboard -> `games` end to end | done |
 | 2 | Team and player box scores -> `players`, `team_game_stats`, `player_game_stats` | done |
-| 3 | Quality checks, `ingest_runs`, `quality_results` | next |
-| 4 | FastAPI read service | |
+| 3 | Six quality checks, `ingest_runs`, `quality_results`, `nba-pipeline check` | done |
+| 4 | FastAPI read service | next |
 | 5 | Dockerfile, Cloud Run job, Scheduler/Pub/Sub, CI | |
 | 6 | Season backfill, play-by-play | |
 
@@ -35,15 +35,20 @@ uv run nba-pipeline ingest --date 2026-03-15
 Expected output:
 
 ```
-2026-03-15: 7 games (inserted=7 updated=0 unchanged=0); teams added=0
-  box scores loaded=7 failed=0
+2026-03-15 run 1: succeeded
+  games        inserted=7 updated=0 unchanged=0 (total=7, teams added=0)
+  box scores   loaded=7 failed=0
   players      inserted=181 updated=0 unchanged=0
   team stats   inserted=14 updated=0 unchanged=0
   player stats inserted=181 updated=0 unchanged=0
+  quality: 6 pass
 ```
 
-Run it again and every row reports `unchanged`. The exit status is 1 if any game failed
-to load, so a scheduler can alert on it. Omit `--date` to ingest yesterday
+Run it again and every row reports `unchanged`. Every run writes a row to
+`ingest_runs` and six rows to `quality_results`. The exit status is 1 if any game
+failed to load or any check reports `fail` or `error`, so a scheduler can alert on it;
+`warn` exits 0. `nba-pipeline check --date 2026-03-15` re-runs the checks without
+ingesting. Omit `--date` to ingest yesterday
 (US/Eastern). Connection settings come from `DATABASE_URL` or a `.env` file; see
 `.env.example`.
 
@@ -68,10 +73,10 @@ src/nba_pipeline/
   schemas/     Pydantic models: raw_* (as received, strict) and clean_* (as stored)
   transform/   raw -> clean: status mapping, minutes -> seconds, payload hashing
   load/        one generic hash-guarded upsert; loaders per table
-  quality/     data-quality checks (step 3)
+  quality/     six checks, each returning a structured CheckResult; runner persists them
   api/         FastAPI app (step 4)
   pipeline.py  one ingest run of one date: scoreboard, then one box score per game
-  cli.py       nba-pipeline ingest --date YYYY-MM-DD
+  cli.py       nba-pipeline ingest|check --date YYYY-MM-DD
 migrations/    Alembic, raw SQL, owns the schema
 tests/         pytest, recorded fixtures in tests/fixtures/
 infra/         Cloud Run / Scheduler / Pub/Sub (step 5)
