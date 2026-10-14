@@ -14,8 +14,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design decisions.
 | Step | Scope | State |
 |------|-------|-------|
 | 1 | Scaffolding, Postgres, migrations, scoreboard -> `games` end to end | done |
-| 2 | Team and player box scores | next |
-| 3 | Quality checks, `ingest_runs`, `quality_results` | |
+| 2 | Team and player box scores -> `players`, `team_game_stats`, `player_game_stats` | done |
+| 3 | Quality checks, `ingest_runs`, `quality_results` | next |
 | 4 | FastAPI read service | |
 | 5 | Dockerfile, Cloud Run job, Scheduler/Pub/Sub, CI | |
 | 6 | Season backfill, play-by-play | |
@@ -36,9 +36,14 @@ Expected output:
 
 ```
 2026-03-15: 7 games (inserted=7 updated=0 unchanged=0); teams added=0
+  box scores loaded=7 failed=0
+  players      inserted=181 updated=0 unchanged=0
+  team stats   inserted=14 updated=0 unchanged=0
+  player stats inserted=181 updated=0 unchanged=0
 ```
 
-Run it again and every row reports `unchanged`. Omit `--date` to ingest yesterday
+Run it again and every row reports `unchanged`. The exit status is 1 if any game failed
+to load, so a scheduler can alert on it. Omit `--date` to ingest yesterday
 (US/Eastern). Connection settings come from `DATABASE_URL` or a `.env` file; see
 `.env.example`.
 
@@ -59,13 +64,13 @@ the migrations on every run.
 
 ```
 src/nba_pipeline/
-  ingest/      nba_api clients, one module per endpoint, shared throttled client
+  ingest/      nba_api clients (scoreboard, boxscore), shared throttled client
   schemas/     Pydantic models: raw_* (as received, strict) and clean_* (as stored)
-  transform/   raw -> clean: status mapping, season derivation, payload hashing
-  load/        SQLAlchemy Core upserts keyed on game_id
+  transform/   raw -> clean: status mapping, minutes -> seconds, payload hashing
+  load/        one generic hash-guarded upsert; loaders per table
   quality/     data-quality checks (step 3)
   api/         FastAPI app (step 4)
-  pipeline.py  one ingest run of one date
+  pipeline.py  one ingest run of one date: scoreboard, then one box score per game
   cli.py       nba-pipeline ingest --date YYYY-MM-DD
 migrations/    Alembic, raw SQL, owns the schema
 tests/         pytest, recorded fixtures in tests/fixtures/

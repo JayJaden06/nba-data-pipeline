@@ -40,9 +40,10 @@ exact shape.
 Sports data arrives late and gets corrected. The pipeline is designed to be run again,
 not to be run once correctly.
 
-* **Keyed upserts.** `games` is keyed on `game_id`; later tables are keyed on
-  `(game_id, team_id)` and `(game_id, player_id)`. `INSERT ... ON CONFLICT DO UPDATE`
-  overwrites every column except `first_seen_at`.
+* **Keyed upserts.** `games` is keyed on `game_id`, `team_game_stats` on
+  `(game_id, team_id)`, `player_game_stats` on `(game_id, player_id)`. One generic
+  `INSERT ... ON CONFLICT DO UPDATE` helper (`load/upsert.py`) overwrites every column
+  except `first_seen_at`.
 * **Change detection.** Each clean row carries a SHA-256 of the source fields that
   matter. The upsert has a `WHERE games.source_payload_hash <> excluded.source_payload_hash`
   clause, so an identical payload touches no rows and `last_updated_at` is only bumped
@@ -62,6 +63,30 @@ not to be run once correctly.
   Preseason games against non-NBA clubs (London Lions, `team_id` 50015) would violate the
   foreign key, so every team seen in a payload is registered first, with `is_nba=false`,
   and the run logs a warning. The game is loaded and flagged, never skipped.
+
+## Box scores
+
+One `BoxScoreTraditionalV3` call per game that has started (in progress or final).
+Scheduled and postponed games are skipped. Each game is loaded in its own
+transaction: players are registered first, then the two team rows, then the player
+rows. A failure in one game (API gave up, payload drifted, a row failed validation or a
+check constraint) is recorded in the run summary and the remaining games still load.
+The CLI exits non-zero if any game failed, so the Cloud Run job shows as failed and
+the next night's run picks the game up again.
+
+Decisions in the stats tables:
+
+* **Percentages are not stored.** They are derived from made and attempted when
+  queried. Storing them would be a drift risk and a consistency risk for nothing.
+* **Minutes are integer seconds.** The source gives `MM:SS` strings; anything that does
+  not match is rejected. Regulation is 14400, each overtime adds 1500.
+* **Did-not-play rows are kept.** Zero stats, `played = false`, and the reason text.
+  Sums still hold and "who was on the roster but did not play" stays answerable.
+* **Players hold identity only.** A player's team is on each `player_game_stats` row.
+  "Current team" is derived from the most recent row when needed, never stored, so
+  out-of-order backfills cannot leave it stale.
+* **Internal consistency is enforced twice.** The clean model rejects made > attempted
+  or rebounds that do not sum, and the same rules are check constraints in Postgres.
 
 ## Loading
 
@@ -87,7 +112,9 @@ non-NBA opponent. Edge cases that are hard to record (postponements, overtime,
 corrections) are built by mutating a recorded payload in the test.
 
 Integration tests run the migrations from scratch against the docker-compose Postgres
-and assert the inserted / updated / unchanged counts across repeated upserts.
+and assert the inserted / updated / unchanged counts across repeated upserts. The
+pipeline itself is tested end to end with a fake API client that serves the recorded
+payloads, including a day where six of seven box scores fail.
 
 ## Still to come
 

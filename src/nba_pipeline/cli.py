@@ -1,6 +1,7 @@
 """Command-line entry point.
 
 Usage: nba-pipeline ingest --date 2026-03-15  (default date: yesterday, US/Eastern)
+Exit status is 1 when any game failed to load, so a scheduler can alert on it.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ from zoneinfo import ZoneInfo
 from nba_pipeline.config import get_settings
 from nba_pipeline.db import get_engine
 from nba_pipeline.ingest.client import NbaApiClient
-from nba_pipeline.pipeline import ingest_date
+from nba_pipeline.load.upsert import UpsertResult
+from nba_pipeline.pipeline import IngestSummary, ingest_date
 
 ET = ZoneInfo("America/New_York")
 
@@ -35,6 +37,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def format_summary(s: IngestSummary) -> str:
+    def fmt(r: UpsertResult) -> str:
+        return f"inserted={r.inserted} updated={r.updated} unchanged={r.unchanged}"
+
+    lines = [
+        f"{s.game_date}: {s.games.total} games ({fmt(s.games)}); teams added={len(s.teams_added)}",
+        f"  box scores loaded={s.box_scores_loaded} failed={len(s.failures)}",
+        f"  players      {fmt(s.players)}",
+        f"  team stats   {fmt(s.team_stats)}",
+        f"  player stats {fmt(s.player_stats)}",
+    ]
+    lines.extend(f"  FAILED {game_id}: {err}" for game_id, err in s.failures.items())
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
@@ -51,13 +68,8 @@ def main(argv: list[str] | None = None) -> int:
             timeout_s=settings.nba_api_timeout_s,
         )
         summary = ingest_date(engine, client, args.date or yesterday_et())
-        r = summary.games
-        print(
-            f"{summary.game_date}: {r.total} games "
-            f"(inserted={r.inserted} updated={r.updated} unchanged={r.unchanged}); "
-            f"teams added={len(summary.teams_added)}"
-        )
-        return 0
+        print(format_summary(summary))
+        return 0 if summary.ok else 1
     return 2
 
 
