@@ -5,11 +5,13 @@ from __future__ import annotations
 from sqlalchemy import Connection
 
 from nba_pipeline.load.tables import games
-from nba_pipeline.load.upsert import UpsertResult, upsert_rows
+from nba_pipeline.load.upsert import UpsertResult, stamp_for_run, upsert_rows
 from nba_pipeline.schemas.clean_game import CleanGame
 
 __all__ = ["UpsertResult", "upsert_games"]
 
 
-def upsert_games(conn: Connection, rows: list[CleanGame]) -> UpsertResult:
-    return upsert_rows(conn, games, rows, key=[games.c.game_id])
+def upsert_games(
+    conn: Connection, rows: list[CleanGame], *, run_id: int | None = None
+) -> UpsertResult:
+    return upsert_rows(conn, games, rows, key=[games.c.game_id], stamp=stamp_for_run(run_id))
