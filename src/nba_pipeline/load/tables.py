@@ -66,3 +66,56 @@ games = Table(
     Column("first_seen_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("last_updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
+
+
+def _stat_columns() -> list[Column[int]]:
+    names = [
+        "fgm", "fga", "fg3m", "fg3a", "ftm", "fta",
+        "oreb", "dreb", "reb", "ast", "stl", "blk", "tov", "pf", "pts",
+    ]  # fmt: skip
+    return [Column(n, Integer, nullable=False) for n in names]
+
+
+players = Table(
+    "players",
+    metadata,
+    Column("player_id", Integer, primary_key=True),
+    Column("first_name", Text, nullable=False),
+    Column("last_name", Text, nullable=False),
+    Column("slug", Text, nullable=False),
+    Column("first_seen_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("last_updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+team_game_stats = Table(
+    "team_game_stats",
+    metadata,
+    Column("game_id", String(10), ForeignKey("games.game_id"), primary_key=True),
+    Column("team_id", Integer, ForeignKey("teams.team_id"), primary_key=True),
+    Column("is_home", Boolean, nullable=False),
+    Column("seconds_played", Integer, nullable=False),
+    *_stat_columns(),
+    Column("plus_minus", Integer, nullable=False),
+    Column("source_payload_hash", CHAR(64), nullable=False),
+    Column("first_seen_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("last_updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+player_game_stats = Table(
+    "player_game_stats",
+    metadata,
+    Column("game_id", String(10), ForeignKey("games.game_id"), primary_key=True),
+    Column("player_id", Integer, ForeignKey("players.player_id"), primary_key=True),
+    Column("team_id", Integer, ForeignKey("teams.team_id"), nullable=False),
+    Column("starter", Boolean, nullable=False),
+    Column("position", String(3)),
+    Column("jersey", String(3)),
+    Column("played", Boolean, nullable=False),
+    Column("dnp_reason", Text),
+    Column("seconds_played", Integer, nullable=False),
+    *_stat_columns(),
+    Column("plus_minus", Integer, nullable=False),
+    Column("source_payload_hash", CHAR(64), nullable=False),
+    Column("first_seen_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("last_updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
