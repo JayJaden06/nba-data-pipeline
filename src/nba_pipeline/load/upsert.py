@@ -46,16 +46,19 @@ def upsert_rows(
     *,
     key: Sequence[Column[Any]],
     change_cols: Sequence[str] = ("source_payload_hash",),
+    stamp: dict[str, Any] | None = None,
 ) -> UpsertResult:
     """Upsert pydantic rows into `table`, keyed on `key`.
 
     A conflicting row is only updated when at least one of `change_cols` differs.
+    `stamp` adds bookkeeping columns (e.g. ingest_run_id) to every row; they are written
+    on insert and on update but never count as a change by themselves.
     """
     if not rows:
         return UpsertResult()
 
     key_names = {c.name for c in key}
-    stmt = insert(table).values([r.model_dump(mode="python") for r in rows])
+    stmt = insert(table).values([r.model_dump(mode="python") | (stamp or {}) for r in rows])
     set_: dict[str, Any] = {
         c.name: getattr(stmt.excluded, c.name)
         for c in table.c
@@ -73,3 +76,7 @@ def upsert_rows(
     return UpsertResult(
         inserted=inserted, updated=len(touched) - inserted, unchanged=len(rows) - len(touched)
     )
+
+
+def stamp_for_run(run_id: int | None) -> dict[str, Any] | None:
+    return {"ingest_run_id": run_id} if run_id is not None else None

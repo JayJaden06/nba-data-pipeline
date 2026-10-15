@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from sqlalchemy import (
     CHAR,
+    BigInteger,
     Boolean,
     Column,
     Date,
@@ -22,8 +23,11 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 
 from nba_pipeline.schemas.clean_game import GameStatus, SeasonType
+from nba_pipeline.schemas.quality import CheckStatus
+from nba_pipeline.schemas.run import RunKind, RunStatus
 
 metadata = MetaData()
 
@@ -63,6 +67,7 @@ games = Table(
     Column("national_tv", Text),
     Column("game_sequence", SmallInteger, nullable=False),
     Column("source_payload_hash", CHAR(64), nullable=False),
+    Column("ingest_run_id", BigInteger, ForeignKey("ingest_runs.run_id")),
     Column("first_seen_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("last_updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
@@ -97,6 +102,7 @@ team_game_stats = Table(
     *_stat_columns(),
     Column("plus_minus", Integer, nullable=False),
     Column("source_payload_hash", CHAR(64), nullable=False),
+    Column("ingest_run_id", BigInteger, ForeignKey("ingest_runs.run_id")),
     Column("first_seen_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("last_updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
@@ -116,6 +122,41 @@ player_game_stats = Table(
     *_stat_columns(),
     Column("plus_minus", Integer, nullable=False),
     Column("source_payload_hash", CHAR(64), nullable=False),
+    Column("ingest_run_id", BigInteger, ForeignKey("ingest_runs.run_id")),
     Column("first_seen_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("last_updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+
+ingest_runs = Table(
+    "ingest_runs",
+    metadata,
+    Column("run_id", BigInteger, primary_key=True),
+    Column("game_date", Date, nullable=False),
+    Column("kind", Enum(RunKind, name="run_kind", values_callable=_values), nullable=False),
+    Column("status", Enum(RunStatus, name="run_status", values_callable=_values), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("finished_at", DateTime(timezone=True)),
+    Column("games_total", Integer, nullable=False, server_default="0"),
+    Column("rows_inserted", Integer, nullable=False, server_default="0"),
+    Column("rows_updated", Integer, nullable=False, server_default="0"),
+    Column("rows_unchanged", Integer, nullable=False, server_default="0"),
+    Column("box_scores_loaded", Integer, nullable=False, server_default="0"),
+    Column("box_scores_failed", Integer, nullable=False, server_default="0"),
+    Column("errors", JSONB, nullable=False, server_default="[]"),
+    Column("summary", JSONB, nullable=False, server_default="{}"),
+)
+
+quality_results = Table(
+    "quality_results",
+    metadata,
+    Column("result_id", BigInteger, primary_key=True),
+    Column("run_id", BigInteger, ForeignKey("ingest_runs.run_id"), nullable=False),
+    Column("game_date", Date, nullable=False),
+    Column("check_name", Text, nullable=False),
+    Column(
+        "status", Enum(CheckStatus, name="check_status", values_callable=_values), nullable=False
+    ),
+    Column("details", JSONB, nullable=False, server_default="{}"),
+    Column("checked_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
