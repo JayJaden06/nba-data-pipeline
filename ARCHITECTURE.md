@@ -120,6 +120,24 @@ Policy decisions:
 * **Tolerances are explicit and recorded in `details`.** Sixty seconds on minutes
   absorbs the NBA's per-player rounding but still catches a missing player.
 
+## Read API
+
+FastAPI over the same tables, SQLAlchemy Core only, one read-only connection per request.
+
+* **Response models are separate from storage models.** `api/models.py` adds derived
+  fields (`MM:SS` minutes, shooting percentages, W/L, record) and hides bookkeeping
+  columns. The pipeline's `clean_*` models can change without breaking API clients, and
+  the other way round.
+* **Derived values are computed at read time, never stored.** Percentages are `null`
+  rather than `0.0` when there were no attempts, so a DNP never looks like an 0-for.
+* **Explicit inputs.** `date` and `season` are required query parameters and malformed
+  values are a 422. "No games that day" is an empty list; an unknown id is a 404.
+* **Quality is visible where the data is.** `/runs/{date}` embeds that run's check
+  results, and `/quality/{date}` follows the most recent run of either kind, so a
+  `nba-pipeline check` after a fix is reflected immediately. `/health` reports
+  `degraded` when the latest run failed.
+* **No pagination yet.** The largest response is one team's or player's season.
+
 ## Loading
 
 SQLAlchemy Core only. Table definitions in `load/tables.py` exist for building

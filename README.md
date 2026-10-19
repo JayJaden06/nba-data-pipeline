@@ -16,8 +16,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design decisions.
 | 1 | Scaffolding, Postgres, migrations, scoreboard -> `games` end to end | done |
 | 2 | Team and player box scores -> `players`, `team_game_stats`, `player_game_stats` | done |
 | 3 | Six quality checks, `ingest_runs`, `quality_results`, `nba-pipeline check` | done |
-| 4 | FastAPI read service | next |
-| 5 | Dockerfile, Cloud Run job, Scheduler/Pub/Sub, CI | |
+| 4 | FastAPI read service, seven endpoints | done |
+| 5 | Dockerfile, Cloud Run job, Scheduler/Pub/Sub, CI | next |
 | 6 | Season backfill, play-by-play | |
 
 ## Quick start (about five minutes)
@@ -52,6 +52,25 @@ ingesting. Omit `--date` to ingest yesterday
 (US/Eastern). Connection settings come from `DATABASE_URL` or a `.env` file; see
 `.env.example`.
 
+## Read API
+
+```bash
+uv run uvicorn nba_pipeline.api.app:app --reload     # http://localhost:8000/docs
+```
+
+| Endpoint | Returns |
+|---|---|
+| `GET /health` | database reachability and the latest run; `degraded` if that run failed |
+| `GET /runs/latest`, `GET /runs/{date}` | run summary with row counts, errors and its quality results |
+| `GET /quality/{date}` | results from the most recent run that checked the date, plus the worst status |
+| `GET /games?date=YYYY-MM-DD` | games on a date with teams and scores (`date` is required) |
+| `GET /games/{game_id}` | one game with both box scores, starters first |
+| `GET /players/{id}/games?season=2025-26` | a player's game log, newest first, with season totals |
+| `GET /teams/{id}/games?season=2025-26` | a team's games with W/L, record and team stats |
+
+Minutes are returned as `MM:SS` and shooting percentages are derived, `null` when there
+were no attempts.
+
 ## Development
 
 ```bash
@@ -74,7 +93,7 @@ src/nba_pipeline/
   transform/   raw -> clean: status mapping, minutes -> seconds, payload hashing
   load/        one generic hash-guarded upsert; loaders per table
   quality/     six checks, each returning a structured CheckResult; runner persists them
-  api/         FastAPI app (step 4)
+  api/         FastAPI app: response models, one router per resource
   pipeline.py  one ingest run of one date: scoreboard, then one box score per game
   cli.py       nba-pipeline ingest|check --date YYYY-MM-DD
 migrations/    Alembic, raw SQL, owns the schema
