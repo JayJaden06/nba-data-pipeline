@@ -1,14 +1,11 @@
 """Integration tests for each quality check against seeded, then deliberately broken, data."""
 
-import os
 from collections.abc import Iterator
 from datetime import date
 from typing import Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, text
 
 from nba_pipeline.pipeline import check_date, ingest_date
 from nba_pipeline.quality import CheckContext, CheckStatus
@@ -20,11 +17,10 @@ from nba_pipeline.quality.box_checks import (
 )
 from nba_pipeline.quality.run_checks import Freshness, SchemaDrift
 from nba_pipeline.quality.runner import run_checks
-from tests.conftest import FakeNbaApiClient
+from tests.conftest import FakeNbaApiClient, migrated_engine
 
 pytestmark = pytest.mark.integration
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
 GAME_DATE = date(2026, 3, 15)
 TODAY = date(2026, 3, 16)
 GAME_ID = "0022500976"
@@ -33,14 +29,7 @@ OKC = 1610612760
 
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    if not DATABASE_URL:
-        pytest.skip("DATABASE_URL not set")
-    cfg = Config("alembic.ini")
-    command.downgrade(cfg, "base")
-    command.upgrade(cfg, "head")
-    eng = create_engine(DATABASE_URL, future=True)
-    yield eng
-    eng.dispose()
+    yield from migrated_engine()
 
 
 @pytest.fixture(autouse=True)

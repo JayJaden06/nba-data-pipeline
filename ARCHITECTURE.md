@@ -166,9 +166,35 @@ and assert the inserted / updated / unchanged counts across repeated upserts. Th
 pipeline itself is tested end to end with a fake API client that serves the recorded
 payloads, including a day where six of seven box scores fail.
 
+## Deployment and the cloud-IP block
+
+The original plan was a Cloud Run job triggered nightly by Cloud Scheduler through
+Pub/Sub. Before building it, a probe workflow called the same endpoints from a GitHub
+Actions runner:
+
+| source | from a home connection | from GitHub Actions |
+|---|---|---|
+| `stats.nba.com` (ScoreboardV3, BoxScoreTraditionalV3) | 200 | read timeout |
+| `cdn.nba.com` (schedule, box score, play-by-play JSON) | 200 | 403, with or without browser headers |
+
+The NBA blocks requests from cloud provider address ranges. GCP, AWS and Azure egress
+all fall in those ranges, so moving the job to Cloud Run would not help. Checking this
+with a throwaway workflow first saved building infrastructure that could never fetch
+data. The fix has to be where the job runs, not how it is packaged, so the nightly run
+is scheduled from a residential connection while CI, tests and the container stay
+cloud-native and unaffected.
+
+The container is deployment-agnostic: the same image runs migrations, ingest, checks
+and the API, configured only by `DATABASE_URL`.
+
+## Testing isolation
+
+Integration tests drop and rebuild the schema, so they run only against
+`TEST_DATABASE_URL` and refuse any database whose name does not end in `_test`. An
+earlier version shared the dev database, and the quality-check tests' deliberately
+corrupted rows stayed behind and were (correctly) flagged by the next real run.
+
 ## Still to come
 
-* `ingest_runs` and `quality_results` (step 3) will give every run a row and attach
-  structured check results. `games` gains a nullable `ingest_run_id` then.
-* Quality checks load-and-flag: a failing check writes to `quality_results` and surfaces
-  in the API, it never drops rows.
+* Nightly scheduling from a residential connection, writing to a hosted Postgres.
+* `backfill` for a full season, then play-by-play (step 6).

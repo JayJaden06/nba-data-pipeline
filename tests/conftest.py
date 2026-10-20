@@ -1,11 +1,49 @@
 import copy
 import json
+import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.engine import make_url
+
+from nba_pipeline.config import get_settings
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+# Integration tests drop and recreate the whole schema, so they must never touch the dev
+# database. They run only against TEST_DATABASE_URL, and only if its database name ends
+# in "_test". DATABASE_URL is overridden for the session so code that reads settings
+# (the CLI, Alembic) also lands on the test database.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+if TEST_DATABASE_URL:
+    _name = make_url(TEST_DATABASE_URL).database or ""
+    if not _name.endswith("_test"):
+        raise pytest.UsageError(
+            f"TEST_DATABASE_URL points at database {_name!r}; it must end in '_test'"
+        )
+    os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+else:
+    os.environ["DATABASE_URL"] = "postgresql+psycopg://unset@localhost:1/no_test_db_configured"
+get_settings.cache_clear()
+
+
+def migrated_engine() -> Iterator[Engine]:
+    """Fresh schema from the migrations on the test database; skips without one."""
+    from alembic import command
+    from alembic.config import Config
+
+    if not TEST_DATABASE_URL:
+        pytest.skip("TEST_DATABASE_URL not set")
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
+    command.downgrade(cfg, "base")
+    command.upgrade(cfg, "head")
+    eng = create_engine(TEST_DATABASE_URL, future=True)
+    yield eng
+    eng.dispose()
 
 
 def load_fixture(name: str) -> dict[str, Any]:

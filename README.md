@@ -1,5 +1,7 @@
 # nba-pipeline
 
+[![CI](https://github.com/JayJaden06/nba-data-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/JayJaden06/nba-data-pipeline/actions/workflows/ci.yml)
+
 A production-style NBA data pipeline. Every night it pulls the previous day's games from
 `nba_api`, validates every record against Pydantic schemas, upserts into Postgres, runs
 data-quality checks, and exposes the results through a small FastAPI service.
@@ -17,7 +19,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design decisions.
 | 2 | Team and player box scores -> `players`, `team_game_stats`, `player_game_stats` | done |
 | 3 | Six quality checks, `ingest_runs`, `quality_results`, `nba-pipeline check` | done |
 | 4 | FastAPI read service, seven endpoints | done |
-| 5 | Dockerfile, Cloud Run job, Scheduler/Pub/Sub, CI | next |
+| 5 | CI, Docker image, isolated test database | done |
+| 5b | Nightly scheduling (see ARCHITECTURE: the NBA blocks cloud IPs) | next |
 | 6 | Season backfill, play-by-play | |
 
 ## Quick start (about five minutes)
@@ -76,13 +79,31 @@ were no attempts.
 ```bash
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
-uv run pytest                                    # unit tests, no network, no database
-DATABASE_URL=postgresql+psycopg://nba:nba@localhost:5432/nba uv run pytest -m integration
+uv run pytest                                    # unit tests; integration tests skip
+TEST_DATABASE_URL=postgresql+psycopg://nba:nba@localhost:5432/nba_test uv run pytest
 ```
 
 Tests never call the NBA API. Payloads are recorded once into `tests/fixtures/` and
-replayed. Integration tests need the docker-compose Postgres and rebuild the schema from
-the migrations on every run.
+replayed. Integration tests rebuild the schema from the migrations on every run, so
+they only run against `TEST_DATABASE_URL`, and refuse any database whose name does not
+end in `_test`. Docker Compose creates `nba_test` the first time the volume is created;
+on an older volume, run `docker compose exec postgres createdb -U nba nba_test`.
+
+CI runs the same lint, type-check and test steps on every pull request against a
+Postgres service container, and builds the Docker image.
+
+## Docker
+
+One image runs every workload:
+
+```bash
+docker build -t nba-pipeline .
+docker run --rm -e DATABASE_URL=... --entrypoint alembic nba-pipeline upgrade head
+docker run --rm -e DATABASE_URL=... nba-pipeline ingest --date 2026-03-15
+docker run --rm -p 8000:8000 -e DATABASE_URL=... --entrypoint uvicorn nba-pipeline   nba_pipeline.api.app:app --host 0.0.0.0 --port 8000
+```
+
+From a container, reach the docker-compose database at `host.docker.internal`.
 
 ## Layout
 
@@ -98,5 +119,5 @@ src/nba_pipeline/
   cli.py       nba-pipeline ingest|check --date YYYY-MM-DD
 migrations/    Alembic, raw SQL, owns the schema
 tests/         pytest, recorded fixtures in tests/fixtures/
-infra/         Cloud Run / Scheduler / Pub/Sub (step 5)
+infra/         docker-compose init scripts
 ```
