@@ -12,6 +12,7 @@ from sqlalchemy import Engine, text
 from nba_pipeline.api.app import create_app
 from nba_pipeline.api.models import minutes_str, pct
 from nba_pipeline.pipeline import check_date, ingest_date
+from nba_pipeline.sources import NbaSource
 from tests.conftest import TEST_DATABASE_URL, FakeNbaApiClient, migrated_engine
 
 pytestmark = pytest.mark.integration
@@ -54,8 +55,8 @@ def seeded(
             ("BoxScoreTraditionalV3", GAME_ID): box,
         }
     )
-    march = ingest_date(engine, client, date(2026, 3, 15), today=date(2026, 3, 16))  # type: ignore[arg-type]
-    october = ingest_date(engine, client, date(2026, 10, 14), today=date(2026, 10, 15))  # type: ignore[arg-type]
+    march = ingest_date(engine, NbaSource(client), date(2026, 3, 15), today=date(2026, 3, 16))
+    october = ingest_date(engine, NbaSource(client), date(2026, 10, 14), today=date(2026, 10, 15))
     return {"march": march, "october": october, "box": box}
 
 

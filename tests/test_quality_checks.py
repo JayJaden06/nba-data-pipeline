@@ -17,6 +17,7 @@ from nba_pipeline.quality.box_checks import (
 )
 from nba_pipeline.quality.run_checks import Freshness, SchemaDrift
 from nba_pipeline.quality.runner import run_checks
+from nba_pipeline.sources import NbaSource
 from tests.conftest import FakeNbaApiClient, migrated_engine
 
 pytestmark = pytest.mark.integration
@@ -55,7 +56,7 @@ def seeded(
             ("BoxScoreTraditionalV3", GAME_ID): boxscore_final,
         }
     )
-    summary = ingest_date(engine, client, GAME_DATE, today=TODAY)  # type: ignore[arg-type]
+    summary = ingest_date(engine, NbaSource(client), GAME_DATE, today=TODAY)
     assert summary.ok
 
 

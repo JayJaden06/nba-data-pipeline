@@ -1,6 +1,10 @@
 """Orchestration for one ingest run of one date.
 
-0. Insert an ingest_runs row (status running) before any API call.
+The pipeline is source-agnostic: a Source (sources.py) turns a date into clean teams
+and games and a game into clean box score rows; everything below works on those.
+
+0. Insert an ingest_runs row (status running) before any API call, and claim the
+   database for the source (one source of record per database).
 1. Scoreboard -> teams (register unknown) + games, one transaction.
 2. For every game that has started (in progress or final): box score -> players +
    team_game_stats + player_game_stats, one transaction per game. A failure in one
@@ -20,11 +24,10 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Engine
 from sqlalchemy.exc import IntegrityError
 
-from nba_pipeline.ingest.boxscore import fetch_boxscore
-from nba_pipeline.ingest.client import NbaApiClient, NbaApiError
-from nba_pipeline.ingest.scoreboard import fetch_scoreboard
+from nba_pipeline.ingest.client import NbaApiError
 from nba_pipeline.load.box_stats import upsert_player_game_stats, upsert_team_game_stats
 from nba_pipeline.load.games import upsert_games
+from nba_pipeline.load.meta import claim_source, get_source
 from nba_pipeline.load.players import upsert_players
 from nba_pipeline.load.runs import finish_run, start_run
 from nba_pipeline.load.teams import ensure_teams
@@ -34,9 +37,8 @@ from nba_pipeline.quality.runner import run_and_record
 from nba_pipeline.schemas import SchemaDriftError
 from nba_pipeline.schemas.clean_game import CleanGame, GameStatus
 from nba_pipeline.schemas.run import RunKind, RunStatus
-from nba_pipeline.transform.boxscore import BoxScoreRows, to_box_score_rows
-from nba_pipeline.transform.games import to_clean_games
-from nba_pipeline.transform.teams import teams_from_scoreboard
+from nba_pipeline.sources import Source
+from nba_pipeline.transform.boxscore import BoxScoreRows
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ def today_et() -> date:
 class IngestSummary:
     run_id: int
     game_date: date
+    source: str
     games: UpsertResult
     teams_added: list[int] = field(default_factory=list)
     box_scores_loaded: int = 0
@@ -107,12 +110,12 @@ def _check_matches_game(rows: BoxScoreRows, game: CleanGame) -> None:
 
 
 def ingest_date(
-    engine: Engine, client: NbaApiClient, game_date: date, *, today: date | None = None
+    engine: Engine, source: Source, game_date: date, *, today: date | None = None
 ) -> IngestSummary:
-    run_id = start_run(engine, game_date)
-    log.info("ingest start run_id=%d date=%s", run_id, game_date)
+    run_id = start_run(engine, game_date, source=source.name)
+    log.info("ingest start run_id=%d date=%s source=%s", run_id, game_date, source.name)
     try:
-        summary = _ingest(engine, client, game_date, run_id, today or today_et())
+        summary = _ingest(engine, source, game_date, run_id, today or today_et())
     except Exception as exc:
         finish_run(
             engine,
@@ -137,11 +140,12 @@ def ingest_date(
 
 
 def _ingest(
-    engine: Engine, client: NbaApiClient, game_date: date, run_id: int, today: date
+    engine: Engine, source: Source, game_date: date, run_id: int, today: date
 ) -> IngestSummary:
-    raw = fetch_scoreboard(client, game_date)
-    clean_teams = teams_from_scoreboard(raw)
-    clean_games = to_clean_games(raw)
+    with engine.begin() as conn:
+        claim_source(conn, source.name)
+    day = source.fetch_day(game_date)
+    clean_teams, clean_games = day.teams, day.games
     log.info("scoreboard date=%s games=%d", game_date, len(clean_games))
 
     with engine.begin() as conn:
@@ -165,7 +169,7 @@ def _ingest(
             log.info("skip box score game_id=%s status=%s", game.game_id, game.status)
             continue
         try:
-            rows = to_box_score_rows(fetch_boxscore(client, game.game_id))
+            rows = source.fetch_box_score(game)
             _check_matches_game(rows, game)
             with engine.begin() as conn:
                 p = upsert_players(conn, rows.players)
@@ -184,6 +188,7 @@ def _ingest(
         today=today,
         run_id=run_id,
         ingest_errors=[{"game_id": g, "error": e} for g, e in failures.items()],
+        source=source.name,
     )
     with engine.begin() as conn:
         checks = run_and_record(conn, ctx)
@@ -191,6 +196,7 @@ def _ingest(
     return IngestSummary(
         run_id=run_id,
         game_date=game_date,
+        source=source.name,
         games=games_result,
         teams_added=teams_added,
         box_scores_loaded=loaded,
@@ -206,8 +212,10 @@ def check_date(
     engine: Engine, game_date: date, *, today: date | None = None
 ) -> tuple[int, list[CheckResult]]:
     """Run the quality checks for a date without ingesting; recorded as a `check` run."""
-    run_id = start_run(engine, game_date, kind=RunKind.CHECK)
-    ctx = CheckContext(game_date=game_date, today=today or today_et(), run_id=run_id)
+    with engine.connect() as conn:
+        source = get_source(conn) or "nba"
+    run_id = start_run(engine, game_date, kind=RunKind.CHECK, source=source)
+    ctx = CheckContext(game_date=game_date, today=today or today_et(), run_id=run_id, source=source)
     try:
         with engine.begin() as conn:
             results = run_and_record(conn, ctx)

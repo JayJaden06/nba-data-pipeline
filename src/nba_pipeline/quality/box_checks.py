@@ -115,7 +115,14 @@ class TeamPointsMatchPlayers:
 
 
 class TeamMinutesSum:
-    """Final games: team seconds == 14400 + 1500 per OT; player seconds sum to it (±60s)."""
+    """Final games: team seconds == 14400 + 1500 per OT, and player seconds sum to it.
+
+    Tolerance on the player sum depends on the source's precision. The NBA reports
+    seconds and rounds a little per player, so 60 s covers it. ESPN reports whole
+    minutes, so each player can be up to 30 s off; the tolerance is 30 s per player who
+    played. Both still catch a missing starter; ESPN's cannot catch a missing player who
+    played only a few minutes. The tolerance used is recorded in the result.
+    """
 
     name = "team_minutes_sum"
 
@@ -123,7 +130,8 @@ class TeamMinutesSum:
         rows = conn.execute(
             text(
                 "SELECT t.game_id, t.team_id, g.periods, t.seconds_played, "
-                "coalesce(sum(p.seconds_played), 0) AS player_seconds "
+                "coalesce(sum(p.seconds_played), 0) AS player_seconds, "
+                "count(p.player_id) FILTER (WHERE p.played) AS n_played "
                 "FROM team_game_stats t JOIN games g USING (game_id) "
                 "LEFT JOIN player_game_stats p ON p.game_id = t.game_id AND p.team_id = t.team_id "
                 "WHERE g.game_date = :d AND g.status = 'final' "
@@ -133,11 +141,12 @@ class TeamMinutesSum:
             {"d": ctx.game_date},
         ).all()
         problems = []
-        for game_id, team_id, periods, team_s, player_s in rows:
+        for game_id, team_id, periods, team_s, player_s, n_played in rows:
             expected = REGULATION_SECONDS + OVERTIME_SECONDS * max(0, (periods or 4) - 4)
+            tolerance = player_sum_tolerance(ctx.source, n_played)
             if (
                 abs(team_s - expected) > MINUTES_TOLERANCE_S
-                or abs(int(player_s) - team_s) > MINUTES_TOLERANCE_S
+                or abs(int(player_s) - team_s) > tolerance
             ):
                 problems.append(
                     {
@@ -147,15 +156,17 @@ class TeamMinutesSum:
                         "expected": expected,
                         "team_seconds": team_s,
                         "player_seconds": int(player_s),
+                        "tolerance_seconds": tolerance,
                     }
                 )
+        precision = "whole minutes (ESPN)" if ctx.source == "espn" else "seconds (NBA)"
         if problems:
             return CheckResult(
                 check_name=self.name,
                 status=CheckStatus.FAIL,
                 details={
                     "message": f"{len(problems)} team-game(s) with minutes outside tolerance",
-                    "tolerance_seconds": MINUTES_TOLERANCE_S,
+                    "source_precision": precision,
                     "problems": problems,
                 },
             )
@@ -164,6 +175,12 @@ class TeamMinutesSum:
             status=CheckStatus.PASS,
             details={
                 "message": f"minutes consistent for {len(rows)} team-game(s)",
-                "tolerance_seconds": MINUTES_TOLERANCE_S,
+                "source_precision": precision,
             },
         )
+
+
+def player_sum_tolerance(source: str, n_played: int) -> int:
+    if source == "espn":
+        return max(MINUTES_TOLERANCE_S, 30 * n_played)
+    return MINUTES_TOLERANCE_S

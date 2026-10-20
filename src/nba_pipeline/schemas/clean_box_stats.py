@@ -6,6 +6,8 @@ Minutes are stored as integer seconds.
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nba_pipeline.schemas.clean_game import GAME_ID_PATTERN
+
 # (clean column, raw RawStatLine field) for the 15 counting stats, in table order.
 STAT_FIELDS: tuple[tuple[str, str], ...] = (
     ("fgm", "field_goals_made"),
@@ -59,14 +61,14 @@ class StatLine(BaseModel):
 
 
 class CleanTeamGameStats(StatLine):
-    game_id: str = Field(pattern=r"^\d{10}$")
+    game_id: str = Field(pattern=GAME_ID_PATTERN)
     team_id: int
     is_home: bool
     source_payload_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class CleanPlayerGameStats(StatLine):
-    game_id: str = Field(pattern=r"^\d{10}$")
+    game_id: str = Field(pattern=GAME_ID_PATTERN)
     player_id: int
     team_id: int
     starter: bool

@@ -12,10 +12,15 @@ from nba_pipeline.load.tables import ingest_runs
 from nba_pipeline.schemas.run import RunKind, RunStatus
 
 
-def start_run(engine: Engine, game_date: date, kind: RunKind = RunKind.INGEST) -> int:
+def start_run(
+    engine: Engine,
+    game_date: date,
+    kind: RunKind = RunKind.INGEST,
+    source: str | None = None,
+) -> int:
     stmt = (
         insert(ingest_runs)
-        .values(game_date=game_date, kind=kind, status=RunStatus.RUNNING)
+        .values(game_date=game_date, kind=kind, status=RunStatus.RUNNING, source=source)
         .returning(ingest_runs.c.run_id)
     )
     with engine.begin() as conn:

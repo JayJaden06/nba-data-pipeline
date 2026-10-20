@@ -5,6 +5,10 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Source-native game ids: 10 digits from the NBA ("0022500976"), 9 from ESPN
+# ("401810831"). The games.game_id column is varchar(10).
+GAME_ID_PATTERN = r"^\d{6,10}$"
+
 
 class GameStatus(StrEnum):
     SCHEDULED = "scheduled"
@@ -26,7 +30,7 @@ class SeasonType(StrEnum):
 class CleanGame(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    game_id: str = Field(pattern=r"^\d{10}$")
+    game_id: str = Field(pattern=GAME_ID_PATTERN)
     game_date: date
     season: str = Field(pattern=r"^\d{4}-\d{2}$")  # 2025-26
     season_type: SeasonType

@@ -1,0 +1,92 @@
+name: Nightly ingest
+
+# Loads yesterday's games from ESPN into the hosted Postgres every morning, then
+# re-ingests the day before to pick up the league's next-day stat corrections.
+# Re-runs are idempotent, so the second pass only writes rows that actually changed.
+#
+# ESPN, not nba_api: stats.nba.com and cdn.nba.com block cloud IP ranges, including
+# GitHub's runners. See ARCHITECTURE.md, "Deployment and the cloud-IP block".
+
+on:
+  schedule:
+    - cron: "0 11 * * *" # 07:00 EDT / 06:00 EST
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Game date to ingest (YYYY-MM-DD). Empty = yesterday and the day before."
+        required: false
+        default: ""
+
+concurrency:
+  group: nightly-ingest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The database URL lives in this environment, which only the main branch may use:
+    # pull requests (including from forks) can never read it.
+    environment: production
+    env:
+      DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      PIPELINE_SOURCE: espn
+    steps:
+      - name: Check configuration
+        id: config
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::notice::NEON_DATABASE_URL is not set in the 'production' environment; skipping."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.configured == 'true'
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.config.outputs.configured == 'true'
+        with:
+          enable-cache: true
+
+      - name: Install
+        if: steps.config.outputs.configured == 'true'
+        run: uv sync --frozen --no-dev
+
+      - name: Migrate
+        if: steps.config.outputs.configured == 'true'
+        run: uv run --no-dev alembic upgrade head
+
+      - name: Ingest
+        if: steps.config.outputs.configured == 'true'
+        env:
+          INPUT_DATE: ${{ inputs.date }}
+        run: |
+          if [ -n "$INPUT_DATE" ]; then
+            dates="$INPUT_DATE"
+          else
+            dates="$(TZ=America/New_York date -d 'yesterday' +%F) $(TZ=America/New_York date -d '2 days ago' +%F)"
+          fi
+          status=0
+          {
+            echo "## Nightly ingest (ESPN)"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          for d in $dates; do
+            set +e
+            out="$(uv run --no-dev nba-pipeline ingest --date "$d" 2>"ingest-$d.log")"
+            code=$?
+            set -e
+            echo "$out"
+            { echo '```'; echo "$out"; echo '```'; echo; } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$code" -ne 0 ]; then
+              echo "::error::ingest $d exited $code"
+              tail -n 50 "ingest-$d.log"
+              status=1
+            fi
+          done
+          exit $status

@@ -83,7 +83,12 @@ def boxscore_ot() -> dict[str, Any]:
 
 
 class FakeNbaApiClient:
-    """Serves recorded payloads keyed by (endpoint name, params); raises NbaApiError otherwise."""
+    """Serves recorded payloads; raises NbaApiError for anything not recorded.
+
+    nba_api calls are keyed by (endpoint class name, first param value), e.g.
+    ("ScoreboardV3", "2026-03-15"). ESPN GETs are keyed by (last URL segment, first param
+    value), e.g. ("scoreboard", "20260315") or ("summary", "401810831").
+    """
 
     def __init__(self, payloads: dict[tuple[str, str], dict[str, Any]]) -> None:
         self.payloads = payloads
@@ -98,3 +103,50 @@ class FakeNbaApiClient:
         if key not in self.payloads:
             raise NbaApiError(f"{name} failed after 6 attempts: not recorded {params}")
         return copy.deepcopy(self.payloads[key])
+
+    def get_json(self, url: str, params: dict[str, str]) -> dict[str, Any]:
+        from nba_pipeline.ingest.client import NbaApiError
+
+        name = url.rsplit("/", 1)[-1]
+        self.calls.append((name, dict(params)))
+        key = (name, next(iter(params.values())))
+        if key not in self.payloads:
+            raise NbaApiError(f"{name} failed after 6 attempts: not recorded {params}")
+        return copy.deepcopy(self.payloads[key])
+
+
+@pytest.fixture
+def espn_scoreboard_final() -> dict[str, Any]:
+    """ESPN 2026-03-15: the same seven regular-season games as scoreboard_final."""
+    return load_fixture("espn_scoreboard_20260315.json")
+
+
+@pytest.fixture
+def espn_scoreboard_scheduled() -> dict[str, Any]:
+    """ESPN 2026-10-21: eleven regular-season games, none started."""
+    return load_fixture("espn_scoreboard_20261021.json")
+
+
+@pytest.fixture
+def espn_scoreboard_intl() -> dict[str, Any]:
+    """ESPN 2026-10-12: preseason, including Portland vs the London Lions (ESPN id 134478)."""
+    return load_fixture("espn_scoreboard_20261012.json")
+
+
+@pytest.fixture
+def espn_summary_final() -> dict[str, Any]:
+    """ESPN event 401810831 = NBA game 0022500976 (MIN @ OKC, 2026-03-15). Trimmed to the
+    blocks the pipeline reads (boxscore, header, plays, format, meta)."""
+    return load_fixture("espn_summary_401810831.json")
+
+
+@pytest.fixture
+def espn_summary_ot() -> dict[str, Any]:
+    """ESPN event 401908621 = NBA game 0012600047 (IND @ OKC preseason), one overtime."""
+    return load_fixture("espn_summary_401908621.json")
+
+
+@pytest.fixture
+def espn_summary_intl() -> dict[str, Any]:
+    """ESPN event 401914130: London Lions @ Portland preseason."""
+    return load_fixture("espn_summary_401914130.json")

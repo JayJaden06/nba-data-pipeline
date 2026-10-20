@@ -95,3 +95,54 @@ def test_non_retryable_errors_propagate() -> None:
 
     with pytest.raises(KeyError):
         client.call(Bug)
+
+
+class FakeResponse:
+    def __init__(self, status: int, body: Any = None) -> None:
+        self.status_code = status
+        self._body = body
+
+    def json(self) -> Any:
+        if isinstance(self._body, Exception):
+            raise self._body
+        return self._body
+
+    def raise_for_status(self) -> None:
+        raise requests.HTTPError(f"HTTP {self.status_code}")
+
+
+def test_get_json_retries_5xx_and_bad_json_then_succeeds() -> None:
+    responses = [
+        FakeResponse(503),
+        FakeResponse(200, ValueError("not json")),
+        FakeResponse(200, {"ok": 1}),
+    ]
+    seen: list[dict[str, Any]] = []
+
+    def http_get(url: str, **kw: Any) -> FakeResponse:
+        seen.append({"url": url, **kw})
+        return responses.pop(0)
+
+    clock = FakeClock()
+    client = NbaApiClient(
+        sleep=clock.sleep, clock=clock, rng=random.Random(0), min_interval_s=0, http_get=http_get
+    )  # type: ignore[arg-type]
+    assert client.get_json("https://x/scoreboard", {"dates": "20260315"}) == {"ok": 1}
+    assert len(seen) == 3 and len(clock.sleeps) == 2
+    assert seen[0]["params"] == {"dates": "20260315"}
+    assert seen[0]["headers"]["User-Agent"].startswith("nba-pipeline/")
+
+
+def test_get_json_does_not_retry_404() -> None:
+    calls = 0
+
+    def http_get(url: str, **kw: Any) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        return FakeResponse(404)
+
+    clock = FakeClock()
+    client = NbaApiClient(sleep=clock.sleep, clock=clock, min_interval_s=0, http_get=http_get)  # type: ignore[arg-type]
+    with pytest.raises(NbaApiError, match="HTTP 404"):
+        client.get_json("https://x/summary", {"event": "1"})
+    assert calls == 1
