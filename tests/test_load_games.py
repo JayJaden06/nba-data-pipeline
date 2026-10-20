@@ -4,35 +4,24 @@ Run locally with:  docker compose up -d && uv run pytest -m integration
 """
 
 import copy
-import os
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import Engine, create_engine, select, text
+from sqlalchemy import Engine, select, text
 
 from nba_pipeline.load.games import upsert_games
 from nba_pipeline.load.tables import games
 from nba_pipeline.schemas.raw_scoreboard import RawScoreboardResponse
 from nba_pipeline.transform.games import to_clean_games
+from tests.conftest import migrated_engine
 
 pytestmark = pytest.mark.integration
-
-DATABASE_URL = os.environ.get("DATABASE_URL")
 
 
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    if not DATABASE_URL:
-        pytest.skip("DATABASE_URL not set")
-    cfg = Config("alembic.ini")
-    command.downgrade(cfg, "base")
-    command.upgrade(cfg, "head")
-    eng = create_engine(DATABASE_URL, future=True)
-    yield eng
-    eng.dispose()
+    yield from migrated_engine()
 
 
 @pytest.fixture(autouse=True)

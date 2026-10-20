@@ -1,14 +1,11 @@
 """Integration tests for players / team_game_stats / player_game_stats upserts."""
 
 import copy
-import os
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import Engine, create_engine, select, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import IntegrityError
 
 from nba_pipeline.load.box_stats import upsert_player_game_stats, upsert_team_game_stats
@@ -19,24 +16,17 @@ from nba_pipeline.schemas.raw_boxscore import RawBoxScoreResponse
 from nba_pipeline.schemas.raw_scoreboard import RawScoreboardResponse
 from nba_pipeline.transform.boxscore import BoxScoreRows, to_box_score_rows
 from nba_pipeline.transform.games import to_clean_games
+from tests.conftest import migrated_engine
 
 pytestmark = pytest.mark.integration
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
 GAME_ID = "0022500976"
 DORT = 1629652
 
 
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    if not DATABASE_URL:
-        pytest.skip("DATABASE_URL not set")
-    cfg = Config("alembic.ini")
-    command.downgrade(cfg, "base")
-    command.upgrade(cfg, "head")
-    eng = create_engine(DATABASE_URL, future=True)
-    yield eng
-    eng.dispose()
+    yield from migrated_engine()
 
 
 @pytest.fixture(autouse=True)

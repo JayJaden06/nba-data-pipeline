@@ -1,25 +1,21 @@
 """API tests: the real FastAPI app over Postgres, seeded through the real pipeline."""
 
 import copy
-import os
 from collections.abc import Iterator
 from datetime import date
 from typing import Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, text
 
 from nba_pipeline.api.app import create_app
 from nba_pipeline.api.models import minutes_str, pct
 from nba_pipeline.pipeline import check_date, ingest_date
-from tests.conftest import FakeNbaApiClient
+from tests.conftest import TEST_DATABASE_URL, FakeNbaApiClient, migrated_engine
 
 pytestmark = pytest.mark.integration
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
 GAME_ID = "0022500976"  # 2026-03-15, MIN 103 @ OKC 116
 OKC, MIN = 1610612760, 1610612750
 SGA, DORT = 1628983, 1629652
@@ -27,14 +23,7 @@ SGA, DORT = 1628983, 1629652
 
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    if not DATABASE_URL:
-        pytest.skip("DATABASE_URL not set")
-    cfg = Config("alembic.ini")
-    command.downgrade(cfg, "base")
-    command.upgrade(cfg, "head")
-    eng = create_engine(DATABASE_URL, future=True)
-    yield eng
-    eng.dispose()
+    yield from migrated_engine()
 
 
 @pytest.fixture(scope="module")
@@ -72,7 +61,7 @@ def seeded(
 
 @pytest.fixture(scope="module")
 def api(seeded: dict[str, Any]) -> Iterator[TestClient]:
-    with TestClient(create_app(DATABASE_URL)) as client:
+    with TestClient(create_app(TEST_DATABASE_URL)) as client:
         yield client
 
 
