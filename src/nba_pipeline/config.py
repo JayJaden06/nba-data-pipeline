@@ -1,6 +1,7 @@
 """Runtime settings, read from environment variables or a local .env file."""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,6 +11,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+psycopg://nba:nba@localhost:5432/nba"
+    # Which source `ingest` uses when --source is not given. One source per database.
+    pipeline_source: Literal["nba", "espn"] = "nba"
 
     # stats.nba.com throttles aggressively; stay polite.
     nba_api_min_interval_s: float = 0.6

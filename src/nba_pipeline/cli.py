@@ -1,10 +1,12 @@
 """Command-line entry point.
 
     nba-pipeline ingest --date 2026-03-15   ingest one date (default: yesterday, US/Eastern)
+    nba-pipeline ingest --source espn        same, from ESPN (default: PIPELINE_SOURCE or nba)
     nba-pipeline check  --date 2026-03-15   run the quality checks only
 
 Exit status is 1 when any game failed to load or any quality check is fail/error, so a
-scheduler can alert on it. A `warn` exits 0.
+scheduler can alert on it. A `warn` exits 0. Exit status 2 means the run was refused,
+e.g. loading one source into a database that holds the other.
 """
 
 from __future__ import annotations
@@ -19,9 +21,11 @@ from zoneinfo import ZoneInfo
 from nba_pipeline.config import get_settings
 from nba_pipeline.db import get_engine
 from nba_pipeline.ingest.client import NbaApiClient
+from nba_pipeline.load.meta import SourceMismatchError
 from nba_pipeline.load.upsert import UpsertResult
 from nba_pipeline.pipeline import IngestSummary, check_date, ingest_date
 from nba_pipeline.schemas.quality import CheckResult, CheckStatus
+from nba_pipeline.sources import SOURCES, make_source
 
 ET = ZoneInfo("America/New_York")
 
@@ -39,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     ingest = sub.add_parser("ingest", help="ingest one game date and run quality checks")
     ingest.add_argument("--date", type=date.fromisoformat, default=None, help="YYYY-MM-DD")
+    ingest.add_argument(
+        "--source", choices=SOURCES, default=None, help="data source (default: PIPELINE_SOURCE)"
+    )
 
     check = sub.add_parser("check", help="run quality checks for one game date")
     check.add_argument("--date", type=date.fromisoformat, default=None, help="YYYY-MM-DD")
@@ -66,7 +73,7 @@ def format_summary(s: IngestSummary) -> str:
         return f"inserted={r.inserted} updated={r.updated} unchanged={r.unchanged}"
 
     lines = [
-        f"{s.game_date} run {s.run_id}: {s.status.value}",
+        f"{s.game_date} run {s.run_id} ({s.source}): {s.status.value}",
         f"  games        {fmt(s.games)} (total={s.games.total}, teams added={len(s.teams_added)})",
         f"  box scores   loaded={s.box_scores_loaded} failed={len(s.failures)}",
         f"  players      {fmt(s.players)}",
@@ -94,7 +101,12 @@ def main(argv: list[str] | None = None) -> int:
             max_retries=settings.nba_api_max_retries,
             timeout_s=settings.nba_api_timeout_s,
         )
-        summary = ingest_date(engine, client, game_date)
+        source = make_source(args.source or settings.pipeline_source, client)
+        try:
+            summary = ingest_date(engine, source, game_date)
+        except SourceMismatchError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
         print(format_summary(summary))
         return 0 if summary.ok else 1
 

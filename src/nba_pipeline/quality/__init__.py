@@ -27,6 +27,7 @@ class CheckContext:
     today: date  # wall-clock date in US/Eastern, injectable for tests
     run_id: int | None = None
     ingest_errors: list[dict[str, Any]] = field(default_factory=list)
+    source: str = "nba"  # minute precision differs by source; see TeamMinutesSum
 
 
 class QualityCheck(Protocol):

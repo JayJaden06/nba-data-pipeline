@@ -11,6 +11,7 @@ from sqlalchemy import Engine, text
 
 from nba_pipeline import cli, pipeline
 from nba_pipeline.pipeline import ingest_date
+from nba_pipeline.sources import NbaSource
 from tests.conftest import FakeNbaApiClient, migrated_engine
 
 pytestmark = pytest.mark.integration
@@ -53,7 +54,7 @@ def test_full_day_success(
             ("BoxScoreTraditionalV3", "0022500976"): boxscore_final,
         }
     )
-    summary = ingest_date(engine, client, MARCH_15, today=MARCH_16)  # type: ignore[arg-type]
+    summary = ingest_date(engine, NbaSource(client), MARCH_15, today=MARCH_16)
     assert summary.ok
     assert summary.games.as_tuple() == (1, 0, 0)
     assert summary.box_scores_loaded == 1
@@ -77,7 +78,7 @@ def test_full_day_success(
     assert summary.players.inserted == summary.player_stats.inserted > 20
     assert [name for name, _ in client.calls] == ["ScoreboardV3", "BoxScoreTraditionalV3"]
 
-    again = ingest_date(engine, client, MARCH_15, today=MARCH_16)  # type: ignore[arg-type]
+    again = ingest_date(engine, NbaSource(client), MARCH_15, today=MARCH_16)
     assert again.ok
     assert again.games.as_tuple() == (0, 0, 1)
     assert again.player_stats.as_tuple() == (0, 0, summary.player_stats.inserted)
@@ -92,7 +93,7 @@ def test_one_bad_game_does_not_stop_the_others(
             ("BoxScoreTraditionalV3", "0022500976"): boxscore_final,
         }
     )
-    summary = ingest_date(engine, client, MARCH_15, today=MARCH_16)  # type: ignore[arg-type]
+    summary = ingest_date(engine, NbaSource(client), MARCH_15, today=MARCH_16)
     assert not summary.ok
     assert summary.games.total == 7
     assert summary.box_scores_loaded == 1
@@ -120,7 +121,7 @@ def test_scheduled_games_are_not_fetched(
     engine: Engine, scoreboard_scheduled: dict[str, Any]
 ) -> None:
     client = FakeNbaApiClient({("ScoreboardV3", "2026-10-14"): scoreboard_scheduled})
-    summary = ingest_date(engine, client, date(2026, 10, 14), today=date(2026, 10, 15))  # type: ignore[arg-type]
+    summary = ingest_date(engine, NbaSource(client), date(2026, 10, 14), today=date(2026, 10, 15))
     assert summary.box_scores_loaded == 0 and not summary.failures
     assert [name for name, _ in client.calls] == ["ScoreboardV3"]
     by_name = {c.check_name: c for c in summary.checks}
@@ -146,7 +147,7 @@ def test_cli_exit_code_reflects_failures(
     # Clean day: everything loads, six checks pass, exit 0.
     assert cli.main(["ingest", "--date", "2026-03-15"]) == 0
     out = capsys.readouterr().out
-    assert re.search(r"run \d+: succeeded", out) and "quality: 6 pass" in out
+    assert re.search(r"run \d+ \(nba\): succeeded", out) and "quality: 6 pass" in out
     assert cli.main(["check", "--date", "2026-03-15"]) == 0
     assert re.search(r"check run \d+: succeeded", capsys.readouterr().out)
 
@@ -154,7 +155,7 @@ def test_cli_exit_code_reflects_failures(
     payloads[("ScoreboardV3", "2026-03-15")] = scoreboard_final
     assert cli.main(["ingest", "--date", "2026-03-15"]) == 1
     out = capsys.readouterr().out
-    assert re.search(r"run \d+: failed", out)
+    assert re.search(r"run \d+ \(nba\): failed", out)
     assert "box scores   loaded=1 failed=6" in out
     assert "FAILED 0022500977" in out
     assert "FAIL box_scores_complete" in out
