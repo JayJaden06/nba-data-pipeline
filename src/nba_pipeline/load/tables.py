@@ -41,7 +41,7 @@ teams = Table(
     "teams",
     metadata,
     Column("team_id", Integer, primary_key=True),
-    Column("abbreviation", String(3), nullable=False),
+    Column("abbreviation", String(6), nullable=False),
     Column("city", Text, nullable=False),
     Column("name", Text, nullable=False),
     Column("full_name", Text, nullable=False),
@@ -134,6 +134,7 @@ ingest_runs = Table(
     Column("run_id", BigInteger, primary_key=True),
     Column("game_date", Date, nullable=False),
     Column("kind", Enum(RunKind, name="run_kind", values_callable=_values), nullable=False),
+    Column("source", Text),
     Column("status", Enum(RunStatus, name="run_status", values_callable=_values), nullable=False),
     Column("started_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("finished_at", DateTime(timezone=True)),
@@ -159,4 +160,12 @@ quality_results = Table(
     ),
     Column("details", JSONB, nullable=False, server_default="{}"),
     Column("checked_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+pipeline_meta = Table(
+    "pipeline_meta",
+    metadata,
+    Column("key", Text, primary_key=True),
+    Column("value", Text, nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
