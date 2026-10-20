@@ -7,7 +7,7 @@ class CleanTeam(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     team_id: int
-    abbreviation: str = Field(min_length=2, max_length=3)
+    abbreviation: str = Field(min_length=2, max_length=6)  # NBA tricodes; other clubs vary
     city: str
     name: str
     full_name: str
