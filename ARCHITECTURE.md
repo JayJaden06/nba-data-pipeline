@@ -180,12 +180,56 @@ Actions runner:
 The NBA blocks requests from cloud provider address ranges. GCP, AWS and Azure egress
 all fall in those ranges, so moving the job to Cloud Run would not help. Checking this
 with a throwaway workflow first saved building infrastructure that could never fetch
-data. The fix has to be where the job runs, not how it is packaged, so the nightly run
-is scheduled from a residential connection while CI, tests and the container stay
-cloud-native and unaffected.
+data. Packaging could not fix it; the job either had to run from a residential
+connection or read a source that does not block cloud runners. The nightly job reads
+ESPN (next section). CI, tests and the container were never affected, because the
+test suite only replays recorded payloads.
 
 The container is deployment-agnostic: the same image runs migrations, ingest, checks
 and the API, configured only by `DATABASE_URL`.
+
+## Two sources: nba_api and ESPN
+
+Because the NBA blocks cloud runners, the nightly job uses ESPN's public JSON, which
+does not. A probe from a GitHub runner confirmed ESPN returns scoreboards and full box
+scores. `nba_api` stays as the precise source for local use.
+
+A `Source` (`sources.py`) turns a date into clean teams and games, and a started game
+into clean box score rows. The loaders, quality checks and API only see clean models,
+so they did not change.
+
+* **One source of record per database.** ESPN game `401810831` is NBA game
+  `0022500976`; player ids differ too, and the NBA ids cannot be looked up from a cloud
+  runner. Mixing sources would duplicate games and split player histories, so the first
+  ingest records its source in `pipeline_meta` and the other source is refused before
+  any API call.
+* **Teams are mapped, games and players are not.** The 30 franchises are a fixed,
+  verifiable mapping onto the NBA's team ids and tricodes (ESPN says `GS`, `UTAH`, `NY`;
+  the API always says `GSW`, `UTA`, `NYK`). Other clubs keep ESPN's id with
+  `is_nba = false`.
+* **Precision is explicit.** ESPN gives whole minutes, so a player's seconds can be off
+  by up to 30. Team minutes and team plus/minus are blank at ESPN and are derived from
+  the score and periods, so team rows are exact. The minutes check widens its tolerance
+  to 30 s per player for ESPN data and records which precision it used.
+* **Strictness where drift would corrupt data.** ESPN stats arrive as positional string
+  arrays, so the column list must match exactly and every row must have one cell per
+  column. The per-player row forbids unknown fields. The rest of the large payload
+  (odds, news, leaders) is ignored.
+* **Verified agreement.** On the same game, every stat for all 27 players and both teams
+  matches between the sources; minutes differ only by rounding. This runs in CI.
+
+The first live ESPN run found a case the fixtures did not have: a player who appeared
+for under 30 seconds has `--` for minutes. That game failed alone, the other six
+loaded, and `box_scores_complete` flagged it. `--` is now read as zero minutes for the
+minutes column only, the game is a recorded fixture, and a re-run of the date filled in
+the missing rows.
+
+## Scheduling
+
+GitHub Actions runs the nightly job on a cron, so nothing depends on a personal machine.
+The only secret, the database URL, is in a GitHub environment restricted to `main`, so
+workflows triggered by pull requests cannot read it. Without the secret the job skips
+rather than fails.
 
 ## Testing isolation
 
@@ -196,5 +240,4 @@ corrupted rows stayed behind and were (correctly) flagged by the next real run.
 
 ## Still to come
 
-* Nightly scheduling from a residential connection, writing to a hosted Postgres.
 * `backfill` for a full season, then play-by-play (step 6).

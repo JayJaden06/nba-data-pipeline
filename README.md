@@ -1,6 +1,7 @@
 # nba-pipeline
 
 [![CI](https://github.com/JayJaden06/nba-data-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/JayJaden06/nba-data-pipeline/actions/workflows/ci.yml)
+[![Nightly ingest](https://github.com/JayJaden06/nba-data-pipeline/actions/workflows/nightly.yml/badge.svg)](https://github.com/JayJaden06/nba-data-pipeline/actions/workflows/nightly.yml)
 
 A production-style NBA data pipeline. Every night it pulls the previous day's games from
 `nba_api`, validates every record against Pydantic schemas, upserts into Postgres, runs
@@ -20,7 +21,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design decisions.
 | 3 | Six quality checks, `ingest_runs`, `quality_results`, `nba-pipeline check` | done |
 | 4 | FastAPI read service, seven endpoints | done |
 | 5 | CI, Docker image, isolated test database | done |
-| 5b | Nightly scheduling (see ARCHITECTURE: the NBA blocks cloud IPs) | next |
+| 5b | ESPN as a second source; nightly ingest on GitHub Actions into hosted Postgres | done |
+| 6 | Season backfill, play-by-play | next |
 | 6 | Season backfill, play-by-play | |
 
 ## Quick start (about five minutes)
@@ -54,6 +56,48 @@ failed to load or any check reports `fail` or `error`, so a scheduler can alert 
 ingesting. Omit `--date` to ingest yesterday
 (US/Eastern). Connection settings come from `DATABASE_URL` or a `.env` file; see
 `.env.example`.
+
+## Sources
+
+| source | where it works | precision | used for |
+|---|---|---|---|
+| `nba` (`nba_api`, default) | home connections only | minutes to the second | local development |
+| `espn` (ESPN public JSON) | anywhere, including GitHub Actions | whole minutes | the nightly job |
+
+```bash
+uv run nba-pipeline ingest --date 2026-03-15 --source espn
+```
+
+Each database holds one source. ESPN and the NBA use different game and player ids, so
+the first ingest claims the database and the other source is refused with exit code 2.
+Use a separate database per source. Team ids are the NBA's in both, so `/teams/{id}`
+means the same team everywhere. On the same game the two sources agree on every stat;
+a test in CI checks it.
+
+## Nightly ingest
+
+[`.github/workflows/nightly.yml`](.github/workflows/nightly.yml) runs at 07:00 Eastern
+on GitHub's servers. It migrates the hosted database, ingests yesterday from ESPN, then
+re-ingests the day before to pick up stat corrections. Each run's summary, including the
+quality checks, is on its page under **Actions**. A failed game or check turns the run
+red. It can also be run by hand for any date from **Actions → Nightly ingest → Run
+workflow**.
+
+Setup, once:
+
+1. Create a free Postgres database, e.g. a [Neon](https://neon.tech) project. No card is
+   needed. Copy its connection string.
+2. Store it in the repository's `production` environment. That environment only accepts
+   the `main` branch, so pull requests can never read it:
+
+   ```bash
+   gh secret set NEON_DATABASE_URL --env production
+   ```
+
+   Paste the connection string when prompted. It is never echoed or logged.
+3. Run the workflow once by hand to confirm.
+
+Until the secret is set, the scheduled run skips with a notice instead of failing.
 
 ## Read API
 
